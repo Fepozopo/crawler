@@ -47,7 +47,7 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 		log.Printf("error getting HTML: %v\n", err)
 		return
 	}
-	fmt.Printf("crawling: %s\n", currentURL)
+	fmt.Printf("Visiting URL: %s\n", currentURL)
 
 	// Get all URLs from the response body HTML.
 	urls, err := getURLsFromHTML(htmlBody, absURL.String())
@@ -58,8 +58,7 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 
 	// Recursively crawl each URL on the page.
 	for _, link := range urls {
-		fmt.Printf("crawling: %s\n", link)
+		fmt.Printf("Discovered link: %s\n", link)
 		crawlPage(rawBaseURL, link, pages)
 	}
-
 }
