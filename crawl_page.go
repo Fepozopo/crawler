@@ -13,6 +13,7 @@ type config struct {
 	mu                 *sync.Mutex
 	concurrencyControl chan struct{}
 	wg                 *sync.WaitGroup
+	maxPages           int
 }
 
 // addPageVisit increments the counter for a normalized URL.
@@ -37,6 +38,11 @@ func (cfg *config) addPageVisit(normalizedURL string) (isFirst bool) {
 // and recursively spawns new goroutines for each discovered link.
 func (cfg *config) crawlPage(rawCurrentURL string) {
 	defer cfg.wg.Done() // Mark this goroutine as done when the function exits
+
+	// Check if we've reached the maximum number of pages to crawl.
+	if cfg.maxPages > 0 && len(cfg.pages) >= cfg.maxPages {
+		return
+	}
 
 	// Parse the current URL.
 	currentParsed, err := url.Parse(rawCurrentURL)
@@ -92,6 +98,13 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 		if !cfg.addPageVisit(normalizedLink) {
 			continue
 		}
+
+		// Check if we've reached the maximum number of pages to crawl.
+		if cfg.maxPages > 0 && len(cfg.pages) >= cfg.maxPages {
+			return
+		}
+
+		fmt.Printf("Visiting URL: %s\n", link)
 
 		// Limit the number of concurrent goroutines
 		cfg.concurrencyControl <- struct{}{} // Block if the channel is full
