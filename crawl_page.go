@@ -4,15 +4,39 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 )
 
-func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
-	// Parse the base URL once as a reference
-	baseParsed, err := url.Parse(rawBaseURL)
-	if err != nil {
-		log.Printf("error parsing base URL: %v\n", err)
-		return
+type config struct {
+	pages              map[string]int
+	baseURL            *url.URL
+	mu                 *sync.Mutex
+	concurrencyControl chan struct{}
+	wg                 *sync.WaitGroup
+}
+
+// addPageVisit increments the counter for a normalized URL.
+// It returns true if this is the first visit to this page.
+// If the page already exists in our map, we simply increment the count and return false.
+func (cfg *config) addPageVisit(normalizedURL string) (isFirst bool) {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+
+	// Check if we've seen this URL before:
+	if cfg.pages[normalizedURL] > 0 {
+		cfg.pages[normalizedURL]++
+		return false
 	}
+	// This is the first time we see this URL.
+	cfg.pages[normalizedURL] = 1
+	return true
+}
+
+// crawlPage performs the crawl for a given raw current URL.
+// It normalizes the URL, retrieves its HTML, extracts its links,
+// and recursively spawns new goroutines for each discovered link.
+func (cfg *config) crawlPage(rawCurrentURL string) {
+	defer cfg.wg.Done() // Mark this goroutine as done when the function exits
 
 	// Parse the current URL.
 	currentParsed, err := url.Parse(rawCurrentURL)
@@ -22,24 +46,25 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 	}
 
 	// Resolve the rawCurrentURL relative to the base URL.
-	absURL := baseParsed.ResolveReference(currentParsed)
+	absURL := cfg.baseURL.ResolveReference(currentParsed)
 
 	// Check that the resolved URL is on the same domain.
-	if baseParsed.Hostname() != absURL.Hostname() {
+	if cfg.baseURL.Hostname() != absURL.Hostname() {
 		return
 	}
 
 	// Normalize the absolute URL.
 	currentURL := normalizeURL(absURL.String())
 
-	// If the pages map already has an entry for normalized current URL, increment and return.
-	if pages[currentURL] > 0 {
-		pages[currentURL]++
+	// Filter out fragment identifiers
+	if currentParsed.Fragment != "" {
 		return
 	}
 
-	// Otherwise, add an entry to the pages map for the normalized current URL, and set count = 1.
-	pages[currentURL] = 1
+	// Add the page visit and check if it's the first visit.
+	if !cfg.addPageVisit(currentURL) {
+		return
+	}
 
 	// Get the HTML for the absolute URL.
 	htmlBody, err := getHTML(absURL.String())
@@ -47,7 +72,7 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 		log.Printf("error getting HTML: %v\n", err)
 		return
 	}
-	fmt.Printf("Visiting URL: %s\n", currentURL)
+	fmt.Printf("Visiting URL: %s\n", absURL.String())
 
 	// Get all URLs from the response body HTML.
 	urls, err := getURLsFromHTML(htmlBody, absURL.String())
@@ -59,6 +84,22 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 	// Recursively crawl each URL on the page.
 	for _, link := range urls {
 		fmt.Printf("Discovered link: %s\n", link)
-		crawlPage(rawBaseURL, link, pages)
+
+		// Normalize the discovered link
+		normalizedLink := normalizeURL(link)
+
+		// Check if the link is already visited
+		if !cfg.addPageVisit(normalizedLink) {
+			continue
+		}
+
+		// Limit the number of concurrent goroutines
+		cfg.concurrencyControl <- struct{}{} // Block if the channel is full
+		cfg.wg.Add(1)                        // Increment the wait group counter
+
+		go func(link string) {
+			defer func() { <-cfg.concurrencyControl }() // Release the slot in the channel
+			cfg.crawlPage(link)
+		}(normalizedLink)
 	}
 }

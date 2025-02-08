@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 func main() {
@@ -15,19 +17,39 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Print the starting message
-	fmt.Printf("starting crawl of: %s\n", os.Args[1])
-
 	// Prepend "http://" to the website if it's missing
 	if !strings.HasPrefix(os.Args[1], "http://") && !strings.HasPrefix(os.Args[1], "https://") {
 		os.Args[1] = "http://" + os.Args[1]
 	}
 
-	// Crawl the website and when it's complete,
-	// print the keys and values of the pages map
-	pages := make(map[string]int)
-	crawlPage(os.Args[1], os.Args[1], pages)
-	for k, v := range pages {
-		fmt.Printf("%v: %v\n", k, v)
+	// Parse the base URL
+	baseURL, err := url.Parse(os.Args[1])
+	if err != nil {
+		fmt.Printf("error parsing base URL: %v\n", err)
+		os.Exit(1)
 	}
+
+	// Print the starting message
+	fmt.Printf("Starting crawl of: %s\n", baseURL.String())
+
+	cfg := &config{
+		pages:              make(map[string]int),
+		baseURL:            baseURL,
+		mu:                 &sync.Mutex{},
+		concurrencyControl: make(chan struct{}, 5), // Limit to 5 concurrent goroutines
+		wg:                 &sync.WaitGroup{},
+	}
+
+	// Start crawling from the base URL
+	cfg.wg.Add(1)
+	go cfg.crawlPage(baseURL.String())
+
+	// Wait for all goroutines to finish
+	cfg.wg.Wait()
+
+	// Print the pages visited
+	for page, count := range cfg.pages {
+		fmt.Printf("Visited %s %d times\n", page, count)
+	}
+
 }
