@@ -78,9 +78,7 @@ func main() {
 	// Wait for all goroutines to finish
 	cfg.wg.Wait()
 
-	// Print the pages visited
-	for page, count := range cfg.pages {
-		fmt.Printf("Visited %s %d times\n", page, count)
-	}
+	// Print the report
+	printReport(cfg.pages, baseURL.String())
 
 }
